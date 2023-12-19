@@ -1,0 +1,181 @@
+/*Query 1 - Create a query that lists each movie, the film category it is classified in, and the number of times it has been rented out.
+
+Question -   What is the Sum of Rental Count by Film Category? */
+
+WITH t1 AS (
+	SELECT f.film_id AS film_id,
+		   f.title AS film_title,
+		   c.name AS category_name
+	  FROM film AS f
+	  JOIN film_category AS fc
+		ON fc.film_id = f.film_id
+	  JOIN category AS c
+		ON c.category_id = fc.category_id
+	),
+
+	 t2 AS (
+	SELECT f.film_id AS film_id,
+		   r.rental_id AS rental_id,
+		   COUNT(*) AS rental_count
+	  FROM film AS f
+	  JOIN inventory AS i
+		ON f.film_id = i.film_id
+	  JOIN rental AS r
+		ON r.inventory_id = i.inventory_id
+	 GROUP BY 1, 2
+		 ),
+		
+	 t3 AS (
+	SELECT film_id,
+		   COUNT(rental_count) AS rental_count
+	  FROM t2
+	 GROUP BY 1
+		 )
+		 
+SELECT film_title,
+	   category_name,
+	   rental_count
+  FROM t1
+  JOIN t3
+	ON t1.film_id = t3.film_id
+ ORDER BY 2, 1;
+
+
+
+
+/*Query 2 - Can you provide a table with the movie titles and divide them into 4 levels (first_quarter, second_quarter, third_quarter, and final_quarter) 
+based on the quartiles (25%, 50%, 75%) of the average rental duration(in the number of days) for movies across all categories? 
+Make sure to also indicate the category that these family-friendly movies fall into.
+
+Question - What is the Average Rental Duration of Films?  */
+
+WITH rental_average AS (
+	SELECT f.film_id AS film_id,
+		   f.title AS film_title,
+		   c.name AS category_name,
+		   ROUND(AVG(f.rental_duration)) AS avg_rental_duration
+	  FROM film AS f
+	  JOIN film_category AS fc
+		ON fc.film_id = f.film_id
+	  JOIN category AS c
+		ON c.category_id = fc.category_id
+	 GROUP BY 1, 2, 3
+		   ),
+		   
+	 quartiles AS (
+	SELECT PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY avg_rental_duration) AS first_quarter,
+           PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY avg_rental_duration) AS second_quarter,
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY avg_rental_duration) AS third_quarter
+      FROM rental_average
+		 )
+		 
+SELECT film_title,
+	   category_name,
+	   avg_rental_duration,
+  CASE WHEN ra.avg_rental_duration <= q.first_quarter THEN 'first_quarter'
+  	   WHEN ra.avg_rental_duration <= q.second_quarter THEN 'second_quarter'
+	   WHEN ra.avg_rental_duration <= q.third_quarter THEN 'third_quarter'
+	   ELSE 'fourth_quarter'
+   END AS rental_duration_quarter
+  FROM rental_average AS ra
+ CROSS JOIN quartiles AS q
+ ORDER BY avg_rental_duration;
+
+
+
+
+
+/*Query 3 - We would like to know who were our top 10 paying customers, how many payments they made on a monthly basis during 2007, and what was the amount of the monthly payments. 
+Can you write a query to capture the customer name, month and year of payment, and total payment amount for each month by these top 10 paying customers?
+
+Question - Who are the Top 10 Paying Customers? */
+
+
+WITH table1 AS (
+	SELECT payment_id,
+		   c.customer_id AS customer_id,
+		   CONCAT(c.first_name, ' ', last_name) AS customer_name,
+		   DATE_TRUNC('month', payment_date) AS pay_month,
+		   SUM(amount) AS amount,
+		   COUNT(*) AS paycount_per_month
+	  FROM payment AS p
+	  JOIN customer AS c
+		ON c.customer_id = p.customer_id
+	 GROUP BY 1, 2, 3
+	 ORDER BY amount DESC
+		),
+		
+	 customer_table AS (
+	SELECT customer_name,
+		   COUNT(paycount_per_month) AS customer_pay_count,
+		   SUM(amount) AS customer_pay_amount
+	  FROM table1
+	 GROUP BY 1
+	 ORDER BY 3 DESC
+	 LIMIT 10
+	   )
+	   
+SELECT t1.pay_month, 
+	   ct.customer_name,
+	   COUNT(ct.customer_pay_count) AS pay_count, 
+	   SUM(t1.amount) AS pay_amount
+  FROM table1 AS t1
+  JOIN customer_table AS ct
+    ON ct.customer_name = t1.customer_name
+ GROUP BY 1, 2
+ ORDER BY customer_name;
+
+
+
+
+
+/*Query 4 - Finally, for each of these top 10 paying customers, I would like to find out the difference across their monthly payments during 2007. 
+Please go ahead and write a query to compare the payment amounts in each successive month. Repeat this for each of these 10 paying customers. 
+Also, it will be tremendously helpful if you can identify the customer name who paid the most difference in terms of payments.
+
+Question - What is the Maximum Difference in Monthly Payments by the Top 10 Customers? */
+
+WITH table1 AS (
+	SELECT payment_id,
+		   c.customer_id AS customer_id,
+		   CONCAT(c.first_name, ' ', last_name) AS customer_name,
+		   DATE_TRUNC('month', payment_date) AS pay_month,
+		   SUM(amount) AS amount,
+		   COUNT(*) AS paycount_per_month
+	  FROM payment AS p
+	  JOIN customer AS c
+		ON c.customer_id = p.customer_id
+	 GROUP BY 1, 2, 3
+	 ORDER BY 5 DESC
+		),
+		
+	 customer_table AS (
+	SELECT customer_name,
+		   COUNT(paycount_per_month) AS customer_pay_count,
+		   SUM(amount) AS customer_pay_amount
+	  FROM table1
+	 GROUP BY 1
+	 ORDER BY 3 DESC
+	 LIMIT 10
+	   ),
+
+	 table2 AS (
+	SELECT t1.pay_month AS pay_month, 
+		   ct.customer_name AS customer_name,
+		   COUNT(ct.customer_pay_count) AS pay_count, 
+		   SUM(t1.amount) AS pay_amount
+	  FROM table1 AS t1
+	  JOIN customer_table AS ct
+		ON ct.customer_name = t1.customer_name
+	 GROUP BY 1, 2
+	 ORDER BY 2
+		 )
+		 
+SELECT pay_month,
+	   customer_name,
+	   pay_amount,
+	   LAG(pay_amount) OVER (PARTITION BY customer_name ORDER BY pay_amount) AS lag,
+	   pay_amount - LAG(pay_amount) OVER (PARTITION BY customer_name ORDER BY pay_amount) AS lag_difference
+  FROM table2;
+	   
+	   
